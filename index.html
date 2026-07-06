@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14283d">
+  <meta name="description" content="Учёт заявок на ремонт рольставней">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <title>Мои ремонты</title>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">ROLLER SHUTTER SERVICE</p>
+      <h1>Мои ремонты</h1>
+    </div>
+    <button id="settingsButton" class="icon-button" aria-label="Настройки">⚙</button>
+  </header>
+
+  <main>
+    <section id="summary" class="summary-grid" aria-label="Итоги"></section>
+
+    <section class="toolbar">
+      <button id="newJobButton" class="primary">＋ Новая заявка</button>
+      <select id="statusFilter" aria-label="Фильтр по статусу">
+        <option value="all">Все заявки</option>
+        <option value="Взято в работу">Взято в работу</option>
+        <option value="Назначено">Назначено</option>
+        <option value="Выполнено">Выполнено</option>
+        <option value="Отказ">Отказ</option>
+      </select>
+    </section>
+
+    <section id="emptyState" class="empty-state" hidden>
+      <div class="empty-icon">🔧</div>
+      <h2>Заявок пока нет</h2>
+      <p>Создайте первую заявку или поделитесь сообщением из WhatsApp.</p>
+    </section>
+    <section id="jobsList" class="jobs-list" aria-live="polite"></section>
+  </main>
+
+  <dialog id="jobDialog">
+    <form id="jobForm" method="dialog">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">КАРТОЧКА КЛИЕНТА</p>
+          <h2 id="jobDialogTitle">Новая заявка</h2>
+        </div>
+        <button type="button" class="icon-button close-dialog" aria-label="Закрыть">×</button>
+      </div>
+
+      <input id="jobId" type="hidden">
+      <div class="form-grid">
+        <label>Статус
+          <select id="status" required>
+            <option>Взято в работу</option>
+            <option>Назначено</option>
+            <option>Выполнено</option>
+            <option>Отказ</option>
+          </select>
+        </label>
+        <label>Дата
+          <input id="date" type="date" required>
+        </label>
+        <label>Дата выполнения
+          <input id="scheduledDate" type="date">
+        </label>
+        <label>Имя клиента
+          <input id="name" autocomplete="name" placeholder="Например, John">
+        </label>
+        <label>Телефон
+          <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+34 600 000 000">
+        </label>
+        <label class="wide">Адрес
+          <input id="address" autocomplete="street-address" placeholder="Улица, город">
+        </label>
+        <label>Стоимость ремонта, €
+          <input id="repairPrice" type="number" inputmode="decimal" min="0" step="0.01" value="0">
+        </label>
+        <label>Комплектующие, €
+          <input id="partsCost" type="number" inputmode="decimal" min="0" step="0.01" value="0">
+        </label>
+        <label>Расстояние до клиента, км
+          <input id="distanceKm" type="number" inputmode="decimal" min="0" step="0.1" value="0">
+        </label>
+        <div class="calculation-card" aria-live="polite">
+          <span>Туда и обратно</span><strong id="roundTripKm">0 км</strong>
+          <span>Бензин</span><strong id="fuelCost">0,00 €</strong>
+          <span>Все расходы</span><strong id="totalCosts">0,00 €</strong>
+          <span>Прибыль</span><strong id="profit" class="profit">0,00 €</strong>
+        </div>
+        <label class="wide">Комментарий
+          <textarea id="comment" rows="3" placeholder="Необязательно"></textarea>
+        </label>
+      </div>
+
+      <p class="formula-note">Расчёт топлива: расстояние × 2 × 7 л / 100 км × 1,60 €.</p>
+      <div class="dialog-actions">
+        <button type="button" class="secondary close-dialog">Отмена</button>
+        <button type="submit" class="primary">Сохранить заявку</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="settingsDialog">
+    <div class="settings-panel">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">GOOGLE ТАБЛИЦА</p>
+          <h2>Настройки</h2>
+        </div>
+        <button type="button" class="icon-button close-settings" aria-label="Закрыть">×</button>
+      </div>
+      <div class="account-card">
+        <span id="accountStatus" class="account-dot" aria-hidden="true"></span>
+        <div><strong id="accountTitle">Google не подключён</strong><p id="accountHelp">Войдите как service.rollershutter@gmail.com</p></div>
+      </div>
+      <button id="googleLoginButton" type="button" class="google-button">Войти через Google</button>
+      <button id="refreshJobsButton" type="button" class="google-button" hidden>Загрузить заявки из таблицы</button>
+      <p class="help">Таблица остаётся закрытой. Приложение сможет отправлять заявки только после входа в ваш Google-аккаунт.</p>
+      <div class="dialog-actions">
+        <button type="button" class="primary close-settings">Готово</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="app.js?v=4" defer></script>
+</body>
+</html>
