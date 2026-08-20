@@ -25,7 +25,7 @@ let accessToken = '';
 let tokenClient;
 let tokenPromise;
 let connectedEmail = '';
-let profitPeriod = { type: 'all', from: '', to: '' };
+let profitPeriod = { type: 'month', from: '', to: '' };
 
 function readJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
@@ -113,8 +113,7 @@ function openNewJob(prefill = {}) {
   $('status').value = DEFAULT_STATUS;
   $('date').value = today();
   $('scheduledDate').value = '';
-  $('scheduledFrom').value = '';
-  $('scheduledTo').value = '';
+  $('timeSlot').value = '';
   $('name').value = prefill.name || '';
   $('phone').value = prefill.phone || '';
   $('comment').value = prefill.comment || '';
@@ -128,10 +127,11 @@ function editJob(id) {
   const job = jobs.find(item => item.id === id);
   if (!job) return;
   $('jobDialogTitle').textContent = 'Редактирование заявки';
-  ['id','status','date','scheduledDate','scheduledFrom','scheduledTo','name','phone','address','repairPrice','partsCost','distanceKm','comment'].forEach(field => {
+  ['id','status','date','scheduledDate','name','phone','address','repairPrice','partsCost','distanceKm','comment'].forEach(field => {
     const element = field === 'id' ? $('jobId') : $(field);
     element.value = field === 'status' ? normalizeStatus(job[field]) : (job[field] ?? '');
   });
+  $('timeSlot').value = timeSlotValue(job);
   resetPhotoFields(job);
   updateCalculations();
   jobDialog.showModal();
@@ -168,13 +168,14 @@ async function formJob() {
     photoUpdatedAt = new Date().toISOString();
   }
 
+  const [scheduledFrom = '', scheduledTo = ''] = ($('timeSlot').value || '').split('-');
   const base = {
     id,
     status: normalizeStatus($('status').value),
     date: $('date').value,
     scheduledDate: $('scheduledDate').value,
-    scheduledFrom: $('scheduledFrom').value,
-    scheduledTo: $('scheduledTo').value,
+    scheduledFrom,
+    scheduledTo,
     name: $('name').value.trim(),
     phone: $('phone').value.trim(),
     address: $('address').value.trim(),
@@ -217,6 +218,10 @@ function formatSchedule(job) {
   return date;
 }
 
+function timeSlotValue(job) {
+  return job.scheduledFrom && job.scheduledTo ? `${job.scheduledFrom}-${job.scheduledTo}` : '';
+}
+
 function phoneDigits(phone) {
   let digits = (phone || '').replace(/\D/g, '');
   if (digits.length === 9) digits = `34${digits}`;
@@ -233,6 +238,7 @@ function currentProfitJobs() {
   const completed = jobs.filter(j => j.status === 'Выполнено');
   if (profitPeriod.type === 'week') return jobsInRange(completed, isoDate(addDays(new Date(), -6)), today());
   if (profitPeriod.type === 'month') return jobsInRange(completed, isoDate(addDays(new Date(), -29)), today());
+  if (profitPeriod.type === 'threeMonths') return jobsInRange(completed, isoDate(addDays(new Date(), -89)), today());
   if (profitPeriod.type === 'custom') return jobsInRange(completed, profitPeriod.from, profitPeriod.to);
   return completed;
 }
@@ -247,22 +253,18 @@ function jobsInRange(source, from, to) {
 function profitPeriodLabel() {
   if (profitPeriod.type === 'week') return 'за 7 дней';
   if (profitPeriod.type === 'month') return 'за 30 дней';
+  if (profitPeriod.type === 'threeMonths') return 'за 3 месяца';
   if (profitPeriod.type === 'custom') return `${formatDate(profitPeriod.from)} — ${formatDate(profitPeriod.to)}`;
   return 'за всё время';
 }
 
 function chooseProfitPeriod() {
-  const choice = prompt('Прибыль за период:\n1 — последняя неделя\n2 — последний месяц\n3 — свой интервал\n4 — всё время', '2');
+  const choice = prompt('Прибыль и выручка за период:\n1 — последняя неделя\n2 — последний месяц\n3 — последние три месяца\n4 — всё время', '2');
   if (choice === null) return;
   if (choice === '1') profitPeriod = { type: 'week', from: '', to: '' };
   else if (choice === '2') profitPeriod = { type: 'month', from: '', to: '' };
-  else if (choice === '3') {
-    const from = prompt('Дата начала в формате ГГГГ-ММ-ДД', today());
-    if (!from) return;
-    const to = prompt('Дата окончания в формате ГГГГ-ММ-ДД', today());
-    if (!to) return;
-    profitPeriod = { type: 'custom', from, to };
-  } else if (choice === '4') profitPeriod = { type: 'all', from: '', to: '' };
+  else if (choice === '3') profitPeriod = { type: 'threeMonths', from: '', to: '' };
+  else if (choice === '4') profitPeriod = { type: 'all', from: '', to: '' };
   render();
 }
 

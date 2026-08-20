@@ -24,27 +24,12 @@
 
     <section class="toolbar">
       <button id="newJobButton" class="primary">＋ Новая заявка</button>
-      <input id="searchInput" class="search-input" type="search" placeholder="Поиск: имя или телефон" aria-label="Поиск заявки">
       <select id="statusFilter" aria-label="Фильтр по статусу">
         <option value="all">Все заявки</option>
         <option value="Взято в работу">Взято в работу</option>
         <option value="Выполнено">Выполнено</option>
         <option value="Отказ">Отказ</option>
       </select>
-    </section>
-
-    <section class="chart-card" aria-label="График">
-      <div class="chart-header">
-        <div>
-          <p class="eyebrow">СТАТИСТИКА</p>
-          <h2>График прибыли и заявок</h2>
-        </div>
-        <select id="chartRange" aria-label="Период графика">
-          <option value="week">Неделя</option>
-          <option value="month">Месяц</option>
-        </select>
-      </div>
-      <div id="chart" class="chart"></div>
     </section>
 
     <section id="emptyState" class="empty-state" hidden>
@@ -80,11 +65,15 @@
         <label>Дата выполнения
           <input id="scheduledDate" type="date">
         </label>
-        <label>Время с
-          <input id="scheduledFrom" type="time">
-        </label>
-        <label>Время до
-          <input id="scheduledTo" type="time">
+        <label class="wide">Время ремонта
+          <select id="timeSlot">
+            <option value="">Без точного времени</option>
+            <option value="10:00-12:00">10:00–12:00</option>
+            <option value="12:00-14:00">12:00–14:00</option>
+            <option value="14:00-16:00">14:00–16:00</option>
+            <option value="16:00-18:00">16:00–18:00</option>
+            <option value="18:00-20:00">18:00–20:00</option>
+          </select>
         </label>
         <label>Имя клиента
           <input id="name" autocomplete="name" placeholder="Например, John">
@@ -149,6 +138,27 @@
       <button id="notificationButton" type="button" class="google-button">Разрешить напоминания</button>
       <p class="help">Таблица остаётся закрытой. Приложение сможет отправлять заявки только после входа в ваш Google-аккаунт.</p>
       <p class="help">Напоминания приходят за 2 часа до выбранного времени ремонта, когда приложение установлено и браузер разрешил уведомления.</p>
+
+      <section class="settings-section" aria-label="Поиск заявок">
+        <p class="eyebrow">ПОИСК</p>
+        <input id="searchInput" class="search-input" type="search" placeholder="Имя или телефон" aria-label="Поиск заявки">
+        <p class="help">Поиск применяется к списку заявок на главном экране.</p>
+      </section>
+
+      <section class="settings-section" aria-label="Статистика">
+        <div class="chart-header">
+          <div>
+            <p class="eyebrow">СТАТИСТИКА</p>
+            <h2>График прибыли и заявок</h2>
+          </div>
+          <select id="chartRange" aria-label="Период графика">
+            <option value="week">Неделя</option>
+            <option value="month">Месяц</option>
+          </select>
+        </div>
+        <div id="chart" class="chart"></div>
+      </section>
+
       <div class="dialog-actions">
         <button type="button" class="primary close-settings">Готово</button>
       </div>
@@ -157,6 +167,6 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="app.js?v=6" defer></script>
+  <script src="app.js?v=7" defer></script>
 </body>
 </html>
