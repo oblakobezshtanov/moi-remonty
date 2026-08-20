@@ -24,13 +24,27 @@
 
     <section class="toolbar">
       <button id="newJobButton" class="primary">＋ Новая заявка</button>
+      <input id="searchInput" class="search-input" type="search" placeholder="Поиск: имя или телефон" aria-label="Поиск заявки">
       <select id="statusFilter" aria-label="Фильтр по статусу">
         <option value="all">Все заявки</option>
         <option value="Взято в работу">Взято в работу</option>
-        <option value="Назначено">Назначено</option>
         <option value="Выполнено">Выполнено</option>
         <option value="Отказ">Отказ</option>
       </select>
+    </section>
+
+    <section class="chart-card" aria-label="График">
+      <div class="chart-header">
+        <div>
+          <p class="eyebrow">СТАТИСТИКА</p>
+          <h2>График прибыли и заявок</h2>
+        </div>
+        <select id="chartRange" aria-label="Период графика">
+          <option value="week">Неделя</option>
+          <option value="month">Месяц</option>
+        </select>
+      </div>
+      <div id="chart" class="chart"></div>
     </section>
 
     <section id="emptyState" class="empty-state" hidden>
@@ -56,7 +70,6 @@
         <label>Статус
           <select id="status" required>
             <option>Взято в работу</option>
-            <option>Назначено</option>
             <option>Выполнено</option>
             <option>Отказ</option>
           </select>
@@ -66,6 +79,12 @@
         </label>
         <label>Дата выполнения
           <input id="scheduledDate" type="date">
+        </label>
+        <label>Время с
+          <input id="scheduledFrom" type="time">
+        </label>
+        <label>Время до
+          <input id="scheduledTo" type="time">
         </label>
         <label>Имя клиента
           <input id="name" autocomplete="name" placeholder="Например, John">
@@ -94,6 +113,14 @@
         <label class="wide">Комментарий
           <textarea id="comment" rows="3" placeholder="Необязательно"></textarea>
         </label>
+        <label class="wide">Фото к заявке
+          <input id="photo" type="file" accept="image/*">
+        </label>
+        <label id="removePhotoWrap" class="checkbox-line wide" hidden>
+          <input id="removePhoto" type="checkbox">
+          Удалить сохранённое фото
+        </label>
+        <div id="photoPreview" class="photo-preview wide" hidden></div>
       </div>
 
       <p class="formula-note">Расчёт топлива: расстояние × 2 × 7 л / 100 км × 1,60 €.</p>
@@ -119,7 +146,9 @@
       </div>
       <button id="googleLoginButton" type="button" class="google-button">Войти через Google</button>
       <button id="refreshJobsButton" type="button" class="google-button" hidden>Загрузить заявки из таблицы</button>
+      <button id="notificationButton" type="button" class="google-button">Разрешить напоминания</button>
       <p class="help">Таблица остаётся закрытой. Приложение сможет отправлять заявки только после входа в ваш Google-аккаунт.</p>
+      <p class="help">Напоминания приходят за 2 часа до выбранного времени ремонта, когда приложение установлено и браузер разрешил уведомления.</p>
       <div class="dialog-actions">
         <button type="button" class="primary close-settings">Готово</button>
       </div>
@@ -128,6 +157,6 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="app.js?v=5" defer></script>
+  <script src="app.js?v=6" defer></script>
 </body>
 </html>
