@@ -18,6 +18,7 @@ const SHEET_HEADERS = [
 const $ = id => document.getElementById(id);
 const jobDialog = $('jobDialog');
 const settingsDialog = $('settingsDialog');
+const periodDialog = $('periodDialog');
 const jobForm = $('jobForm');
 
 let jobs = readJson(STORAGE_KEY, []).map(normalizeJob);
@@ -112,7 +113,8 @@ function openNewJob(prefill = {}) {
   $('jobDialogTitle').textContent = 'Новая заявка';
   $('status').value = DEFAULT_STATUS;
   $('date').value = today();
-  $('scheduledDate').value = '';
+  delete $('scheduledDate').dataset.changed;
+  $('scheduledDate').value = $('date').value;
   $('timeSlot').value = '';
   $('name').value = prefill.name || '';
   $('phone').value = prefill.phone || '';
@@ -127,6 +129,7 @@ function editJob(id) {
   const job = jobs.find(item => item.id === id);
   if (!job) return;
   $('jobDialogTitle').textContent = 'Редактирование заявки';
+  $('scheduledDate').dataset.changed = 'true';
   ['id','status','date','scheduledDate','name','phone','address','repairPrice','partsCost','distanceKm','comment'].forEach(field => {
     const element = field === 'id' ? $('jobId') : $(field);
     element.value = field === 'status' ? normalizeStatus(job[field]) : (job[field] ?? '');
@@ -250,6 +253,10 @@ function jobsInRange(source, from, to) {
   });
 }
 
+function recentFromDate() {
+  return isoDate(addDays(new Date(), -13));
+}
+
 function profitPeriodLabel() {
   if (profitPeriod.type === 'week') return 'за 7 дней';
   if (profitPeriod.type === 'month') return 'за 30 дней';
@@ -259,12 +266,12 @@ function profitPeriodLabel() {
 }
 
 function chooseProfitPeriod() {
-  const choice = prompt('Прибыль и выручка за период:\n1 — последняя неделя\n2 — последний месяц\n3 — последние три месяца\n4 — всё время', '2');
-  if (choice === null) return;
-  if (choice === '1') profitPeriod = { type: 'week', from: '', to: '' };
-  else if (choice === '2') profitPeriod = { type: 'month', from: '', to: '' };
-  else if (choice === '3') profitPeriod = { type: 'threeMonths', from: '', to: '' };
-  else if (choice === '4') profitPeriod = { type: 'all', from: '', to: '' };
+  periodDialog.showModal();
+}
+
+function setProfitPeriod(type) {
+  profitPeriod = { type, from: '', to: '' };
+  periodDialog.close();
   render();
 }
 
@@ -282,7 +289,10 @@ function render() {
   const filter = $('statusFilter').value;
   const query = ($('searchInput').value || '').trim().toLowerCase();
   const visible = jobs
-    .filter(j => filter === 'all' || j.status === filter)
+    .filter(j => {
+      if (filter === 'recent') return jobsInRange([j], recentFromDate(), today()).length > 0;
+      return filter === 'all' || j.status === filter;
+    })
     .filter(j => !query || `${j.name || ''} ${j.phone || ''}`.toLowerCase().includes(query))
     .sort((a,b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
 
@@ -291,13 +301,16 @@ function render() {
     const digits = phoneDigits(job.phone);
     const maps = mapUrl(job.address);
     const wa = `https://wa.me/${digits}`;
+    const completed = job.status === 'Выполнено';
     const dueToday = job.scheduledDate === today() && !['Выполнено','Отказ'].includes(job.status);
     const schedule = formatSchedule(job);
+    const scheduleLabel = completed ? 'Выполнено' : 'Выполнить';
+    const scheduleClass = completed ? 'job-scheduled completed' : 'job-scheduled';
     return `<article class="job-card ${dueToday ? 'due-today' : ''}" data-id="${escapeHtml(job.id)}">
       <div class="job-main">
         <div class="job-top"><div><h2>${escapeHtml(job.name || 'Без имени')}</h2><p class="job-phone">${escapeHtml(job.phone || 'Телефон не указан')} · ${escapeHtml(job.date)}</p></div><span class="status ${statusClass(job.status)}">${escapeHtml(job.status)}</span></div>
         ${job.address ? `<p class="job-address">📍 ${escapeHtml(job.address)}</p>` : ''}
-        ${schedule ? `<p class="job-scheduled">🗓 Выполнить: ${escapeHtml(schedule)}${dueToday ? ' · СЕГОДНЯ' : ''}</p>` : ''}
+        ${schedule ? `<p class="${scheduleClass}">🗓 ${scheduleLabel}: ${escapeHtml(schedule)}${dueToday ? ' · СЕГОДНЯ' : ''}</p>` : ''}
         ${job.comment ? `<p class="job-comment">💬 ${escapeHtml(job.comment)}</p>` : ''}
         ${job.photoData ? `<p class="job-photo">📷 Фото сохранено на этом устройстве</p>` : ''}
         <div class="money-row"><div><span>Ремонт</span><strong>${money(job.repairPrice)}</strong></div><div><span>Расходы</span><strong>${money(job.totalCosts)}</strong></div><div><span>Прибыль</span><strong>${money(job.profit)}</strong></div></div>
@@ -643,6 +656,15 @@ $('chartRange').addEventListener('change', renderChart);
 ['repairPrice','partsCost','distanceKm'].forEach(id => $(id).addEventListener('input', updateCalculations));
 document.querySelectorAll('.close-dialog').forEach(button => button.addEventListener('click', () => jobDialog.close()));
 document.querySelectorAll('.close-settings').forEach(button => button.addEventListener('click', () => settingsDialog.close()));
+document.querySelectorAll('.close-period').forEach(button => button.addEventListener('click', () => periodDialog.close()));
+document.querySelectorAll('.period-option').forEach(button => button.addEventListener('click', () => setProfitPeriod(button.dataset.period)));
+
+$('date').addEventListener('change', () => {
+  if (!$('jobId').value && !$('scheduledDate').dataset.changed) $('scheduledDate').value = $('date').value;
+});
+$('scheduledDate').addEventListener('input', () => {
+  $('scheduledDate').dataset.changed = 'true';
+});
 
 jobForm.addEventListener('submit', async event => {
   event.preventDefault();

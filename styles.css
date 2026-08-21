@@ -57,6 +57,7 @@ button.summary-card { width: 100%; text-align: left; color: var(--navy); cursor:
 .job-card h2 { margin: 0; font-size: 19px; }
 .job-phone, .job-address, .job-comment, .job-photo { margin: 5px 0 0; color: var(--muted); font-size: 14px; }
 .job-scheduled { margin: 7px 0 0; color: #6d28d9; font-size: 14px; font-weight: 750; }
+.job-scheduled.completed { color: #086c38; }
 .status { display: inline-flex; align-items: center; height: fit-content; padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 750; background: #fff4db; color: #7a4d00; }
 .status.done { background: #dff6e8; color: #086c38; }
 .status.assigned { background: #fde8e7; color: #b42318; }
@@ -93,6 +94,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(201,149,45,.
 .photo-preview { padding: 12px; border: 1px dashed #cfd8e1; border-radius: 12px; background: #fbfcfd; color: var(--muted); font-size: 13px; }
 .photo-preview img { display: block; width: min(220px, 100%); margin-top: 8px; border-radius: 12px; border: 1px solid var(--line); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.period-buttons { display: grid; gap: 10px; }
+.period-buttons .secondary { text-align: left; }
 .account-card { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #f7f9fb; }
 .account-card p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
 .account-dot { width: 11px; height: 11px; flex: 0 0 auto; border-radius: 50%; background: #98a2b3; }
