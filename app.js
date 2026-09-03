@@ -1,18 +1,20 @@
 const STORAGE_KEY = 'repair-jobs-v1';
+const CONNECTED_EMAIL_KEY = 'repair-google-email-v1';
 const FUEL_CONSUMPTION = 7;
 const FUEL_PRICE = 1.6;
 const GOOGLE_CLIENT_ID = '298331612158-3hmsvel6fnph3ep8f9s2p1kti141hrce.apps.googleusercontent.com';
 const SPREADSHEET_ID = '19xL6uLxnZWO4mzWoI-j_VmjBPPRzhjwasJq9Ql951jI';
 const SHEET_NAME = 'Клиенты';
 const ALLOWED_EMAIL = 'service.rollershutter@gmail.com';
-const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.email';
+const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.email';
 const LEGACY_ASSIGNED_STATUS = 'Назначено';
 const DEFAULT_STATUS = 'Взято в работу';
 const SHEET_HEADERS = [
   'ID', 'Дата', 'Статус', 'Имя', 'Телефон', 'Адрес', 'Стоимость ремонта, €',
   'Расстояние в одну сторону, км', 'Расстояние туда и обратно, км', 'Топливо, л',
   'Затраты на бензин, €', 'Комплектующие, €', 'Все расходы, €', 'Прибыль, €',
-  'Комментарий', 'Обновлено', 'Дата выполнения', 'Время с', 'Время до', 'Напоминание отправлено'
+  'Комментарий', 'Обновлено', 'Дата выполнения', 'Время с', 'Время до', 'Напоминание отправлено',
+  'Google Calendar Event ID'
 ];
 
 const $ = id => document.getElementById(id);
@@ -25,7 +27,7 @@ let jobs = readJson(STORAGE_KEY, []).map(normalizeJob);
 let accessToken = '';
 let tokenClient;
 let tokenPromise;
-let connectedEmail = '';
+let connectedEmail = localStorage.getItem(CONNECTED_EMAIL_KEY) || '';
 let profitPeriod = { type: 'month', from: '', to: '' };
 
 function readJson(key, fallback) {
@@ -49,6 +51,7 @@ function normalizeJob(job = {}) {
     scheduledFrom: job.scheduledFrom || '',
     scheduledTo: job.scheduledTo || '',
     reminderSentFor: job.reminderSentFor || '',
+    calendarEventId: job.calendarEventId || '',
     synced: Boolean(job.synced)
   };
   return { ...base, ...calculations(base) };
@@ -111,6 +114,7 @@ function openNewJob(prefill = {}) {
   jobForm.reset();
   $('jobId').value = '';
   $('jobDialogTitle').textContent = 'Новая заявка';
+  $('deleteJobButton').hidden = true;
   $('status').value = DEFAULT_STATUS;
   $('date').value = today();
   delete $('scheduledDate').dataset.changed;
@@ -129,6 +133,7 @@ function editJob(id) {
   const job = jobs.find(item => item.id === id);
   if (!job) return;
   $('jobDialogTitle').textContent = 'Редактирование заявки';
+  $('deleteJobButton').hidden = false;
   $('scheduledDate').dataset.changed = 'true';
   ['id','status','date','scheduledDate','name','phone','address','repairPrice','partsCost','distanceKm','comment'].forEach(field => {
     const element = field === 'id' ? $('jobId') : $(field);
@@ -189,6 +194,7 @@ async function formJob() {
     updatedAt: new Date().toISOString(),
     synced: false,
     reminderSentFor: previous.reminderSentFor || '',
+    calendarEventId: previous.calendarEventId || '',
     photoData,
     photoName,
     photoUpdatedAt
@@ -321,7 +327,7 @@ function render() {
         <a href="${job.address ? maps : '#'}" target="_blank" aria-label="Открыть адрес на карте">📍</a>
         <button class="photo-open" aria-label="Открыть фото">📷</button>
         <button class="edit" aria-label="Редактировать">✎</button>
-        <button class="sync ${job.synced ? 'synced' : ''}" aria-label="Отправить в Google Таблицу">${job.synced ? '✓' : '☁'}</button>
+        <button class="sync ${job.synced ? 'synced' : ''}" aria-label="Отправить в Google Таблицу и Календарь">${job.synced ? '✓' : '☁'}</button>
       </div>
     </article>`;
   }).join('');
@@ -370,7 +376,7 @@ function updateAccountStatus() {
   const connected = connectedEmail === ALLOWED_EMAIL && Boolean(accessToken);
   $('accountStatus').classList.toggle('connected', connected);
   $('accountTitle').textContent = connected ? 'Google подключён' : 'Google не подключён';
-  $('accountHelp').textContent = connected ? connectedEmail : `Войдите как ${ALLOWED_EMAIL}`;
+  $('accountHelp').textContent = connected ? connectedEmail : (connectedEmail === ALLOWED_EMAIL ? 'Доступ сохранён, при синхронизации Google может подтвердить вход автоматически' : `Войдите как ${ALLOWED_EMAIL}`);
   $('googleLoginButton').textContent = connected ? 'Войти заново' : 'Войти через Google';
   $('refreshJobsButton').hidden = !connected;
   updateNotificationButton();
@@ -411,7 +417,7 @@ async function requestGoogleAccess() {
   if (!initGoogleLogin()) throw new Error('Google ещё загружается. Повторите через несколько секунд.');
   const token = await new Promise((resolve, reject) => {
     tokenPromise = { resolve, reject };
-    tokenClient.requestAccessToken({ prompt: 'select_account' });
+    tokenClient.requestAccessToken({ prompt: connectedEmail === ALLOWED_EMAIL ? '' : 'select_account' });
   });
   const profileResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
     headers: { Authorization: `Bearer ${token}` }
@@ -422,17 +428,28 @@ async function requestGoogleAccess() {
     google.accounts.oauth2.revoke(token);
     accessToken = '';
     connectedEmail = '';
+    localStorage.removeItem(CONNECTED_EMAIL_KEY);
     updateAccountStatus();
     throw new Error(`Нужен аккаунт ${ALLOWED_EMAIL}`);
   }
   accessToken = token;
   connectedEmail = profile.email.toLowerCase();
+  localStorage.setItem(CONNECTED_EMAIL_KEY, connectedEmail);
   updateAccountStatus();
   return token;
 }
 
 async function sheetsRequest(url, options = {}) {
   const token = await requestGoogleAccess();
+  return googleJsonRequest(url, options, token, 'Google Таблица не приняла данные');
+}
+
+async function calendarRequest(url, options = {}) {
+  const token = await requestGoogleAccess();
+  return googleJsonRequest(url, options, token, 'Google Календарь не принял данные');
+}
+
+async function googleJsonRequest(url, options = {}, token, fallbackMessage) {
   const response = await fetch(url, {
     ...options,
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) }
@@ -444,9 +461,10 @@ async function sheetsRequest(url, options = {}) {
   }
   if (!response.ok) {
     const details = await response.json().catch(() => ({}));
-    throw new Error(details.error?.message || 'Google Таблица не приняла данные');
+    throw new Error(details.error?.message || fallbackMessage);
   }
-  return response.json();
+  if (response.status === 204) return {};
+  return response.json().catch(() => ({}));
 }
 
 function sheetRow(job) {
@@ -455,7 +473,7 @@ function sheetRow(job) {
     job.repairPrice, job.distanceKm, job.roundTripKm, job.fuelLiters,
     job.fuelCost, job.partsCost, job.totalCosts, job.profit, job.comment,
     job.updatedAt, job.scheduledDate || '', job.scheduledFrom || '', job.scheduledTo || '',
-    job.reminderSentFor || ''
+    job.reminderSentFor || '', job.calendarEventId || ''
   ]];
 }
 
@@ -488,6 +506,7 @@ function jobFromSheet(row) {
     scheduledFrom: String(row[17] || ''),
     scheduledTo: String(row[18] || ''),
     reminderSentFor: String(row[19] || ''),
+    calendarEventId: String(row[20] || ''),
     synced: true
   };
   return { ...base, ...calculations(base), synced: true, needsPhoneRepair: phoneWasFormula };
@@ -495,10 +514,10 @@ function jobFromSheet(row) {
 
 async function loadJobsFromSheet(showMessage = true) {
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values`;
-  await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A1:T1`)}?valueInputOption=USER_ENTERED`, {
+  await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A1:U1`)}?valueInputOption=USER_ENTERED`, {
     method: 'PUT', body: JSON.stringify({ values: [SHEET_HEADERS] })
   });
-  const response = await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A2:T`)}?valueRenderOption=FORMULA&dateTimeRenderOption=FORMATTED_STRING`);
+  const response = await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A2:U`)}?valueRenderOption=FORMULA&dateTimeRenderOption=FORMATTED_STRING`);
   const cloudJobs = (response.values || []).filter(row => row[0]).map(jobFromSheet);
   const merged = new Map(jobs.map(job => [String(job.id), normalizeJob(job)]));
   cloudJobs.forEach(cloudJob => {
@@ -532,29 +551,145 @@ async function syncJob(id, options = {}) {
   const job = jobs.find(item => item.id === id);
   if (!job) return;
   try {
-    if (!options.quiet) toast('Подключаю Google Таблицу…');
+    if (!options.quiet) toast('Подключаю Google…');
+    await syncCalendarEvent(job);
     const base = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values`;
     const ids = await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A2:A`)}`);
     const rowIndex = (ids.values || []).findIndex(row => String(row[0]) === String(job.id));
     if (rowIndex >= 0) {
       const rowNumber = rowIndex + 2;
-      await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A${rowNumber}:T${rowNumber}`)}?valueInputOption=RAW`, {
+      await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A${rowNumber}:U${rowNumber}`)}?valueInputOption=RAW`, {
         method: 'PUT', body: JSON.stringify({ values: sheetRow(job) })
       });
     } else {
-      await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A:T`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+      await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A:U`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
         method: 'POST', body: JSON.stringify({ values: sheetRow(job) })
       });
     }
     job.synced = true;
     job.syncedAt = new Date().toISOString();
     saveJobs();
-    if (!options.quiet) toast('Заявка отправлена в Google Таблицу');
+    if (!options.quiet) toast('Заявка отправлена в таблицу и календарь ✓');
   } catch (error) {
     if (!options.quiet) toast(error.message || 'Нет связи. Заявка сохранена на телефоне');
     return false;
   }
   return true;
+}
+
+function calendarDateTime(date, time) {
+  return `${date}T${time}:00`;
+}
+
+function calendarEventBody(job) {
+  const title = `Ремонт: ${job.name || 'клиент'}`;
+  const details = [
+    job.phone ? `Телефон: ${job.phone}` : '',
+    job.address ? `Адрес: ${job.address}` : '',
+    job.repairPrice ? `Стоимость ремонта: ${money(job.repairPrice)}` : '',
+    job.comment ? `Комментарий: ${job.comment}` : ''
+  ].filter(Boolean).join('\n');
+  return {
+    summary: title,
+    location: job.address || '',
+    description: details,
+    start: { dateTime: calendarDateTime(job.scheduledDate, job.scheduledFrom), timeZone: 'Europe/Madrid' },
+    end: { dateTime: calendarDateTime(job.scheduledDate, job.scheduledTo || job.scheduledFrom), timeZone: 'Europe/Madrid' },
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: 'popup', minutes: 24 * 60 },
+        { method: 'popup', minutes: 2 * 60 }
+      ]
+    },
+    extendedProperties: {
+      private: { repairJobId: job.id }
+    }
+  };
+}
+
+async function syncCalendarEvent(job) {
+  if (!job.scheduledDate || !job.scheduledFrom || !job.scheduledTo) return;
+  const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+  const body = calendarEventBody(job);
+  let event = null;
+  if (job.calendarEventId) {
+    try {
+      event = await calendarRequest(`${base}/${encodeURIComponent(job.calendarEventId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body)
+      });
+    } catch (error) {
+      if (!String(error.message || '').includes('Not Found')) throw error;
+      job.calendarEventId = '';
+    }
+  }
+  if (!job.calendarEventId) {
+    event = await calendarRequest(base, {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+  }
+  if (event?.id) job.calendarEventId = event.id;
+}
+
+async function deleteCalendarEvent(job) {
+  if (!job?.calendarEventId) return;
+  const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+  try {
+    await calendarRequest(`${base}/${encodeURIComponent(job.calendarEventId)}`, { method: 'DELETE' });
+  } catch (error) {
+    if (!String(error.message || '').includes('Not Found')) throw error;
+  }
+}
+
+async function deleteJobFromSheet(job) {
+  if (!job?.id) return;
+  const base = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}`;
+  const valuesBase = `${base}/values`;
+  const ids = await sheetsRequest(`${valuesBase}/${encodeURIComponent(`${SHEET_NAME}!A2:A`)}`);
+  const rowIndex = (ids.values || []).findIndex(row => String(row[0]) === String(job.id));
+  if (rowIndex < 0) return;
+  const metadata = await sheetsRequest(base);
+  const sheet = metadata.sheets?.find(item => item.properties?.title === SHEET_NAME);
+  if (!sheet) return;
+  const rowNumber = rowIndex + 1;
+  await sheetsRequest(`${base}:batchUpdate`, {
+    method: 'POST',
+    body: JSON.stringify({
+      requests: [{
+        deleteDimension: {
+          range: {
+            sheetId: sheet.properties.sheetId,
+            dimension: 'ROWS',
+            startIndex: rowNumber,
+            endIndex: rowNumber + 1
+          }
+        }
+      }]
+    })
+  });
+}
+
+async function deleteCurrentJob() {
+  const id = $('jobId').value;
+  const job = jobs.find(item => item.id === id);
+  if (!job) return;
+  if (!confirm(`Удалить заявку "${job.name || 'Без имени'}"?`)) return;
+  const connected = accessToken && connectedEmail === ALLOWED_EMAIL;
+  try {
+    if (connected) {
+      toast('Удаляю заявку из Google…');
+      await deleteCalendarEvent(job);
+      await deleteJobFromSheet(job);
+    }
+    jobs = jobs.filter(item => item.id !== id);
+    saveJobs();
+    jobDialog.close();
+    toast(connected ? 'Заявка удалена из телефона, таблицы и календаря' : 'Заявка удалена с этого устройства');
+  } catch (error) {
+    toast(error.message || 'Не удалось удалить заявку из Google');
+  }
 }
 
 function parseSharedData() {
@@ -658,6 +793,7 @@ document.querySelectorAll('.close-dialog').forEach(button => button.addEventList
 document.querySelectorAll('.close-settings').forEach(button => button.addEventListener('click', () => settingsDialog.close()));
 document.querySelectorAll('.close-period').forEach(button => button.addEventListener('click', () => periodDialog.close()));
 document.querySelectorAll('.period-option').forEach(button => button.addEventListener('click', () => setProfitPeriod(button.dataset.period)));
+$('deleteJobButton').addEventListener('click', deleteCurrentJob);
 
 $('date').addEventListener('change', () => {
   if (!$('jobId').value && !$('scheduledDate').dataset.changed) $('scheduledDate').value = $('date').value;

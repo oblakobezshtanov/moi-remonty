@@ -1,5 +1,5 @@
-const CACHE = 'repairs-v8';
-const FILES = ['./', './index.html', './styles.css', './app.js?v=8', './manifest.webmanifest', './icon.svg'];
+const CACHE = 'repairs-v9';
+const FILES = ['./', './index.html', './styles.css', './app.js?v=9', './manifest.webmanifest', './icon.svg'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES))));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))));
 self.addEventListener('fetch', event => {
