@@ -550,9 +550,10 @@ async function syncPendingJobs() {
 async function syncJob(id, options = {}) {
   const job = jobs.find(item => item.id === id);
   if (!job) return;
+  let calendarSynced = false;
+  let calendarError = '';
   try {
     if (!options.quiet) toast('Подключаю Google…');
-    await syncCalendarEvent(job);
     const base = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values`;
     const ids = await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A2:A`)}`);
     const rowIndex = (ids.values || []).findIndex(row => String(row[0]) === String(job.id));
@@ -566,15 +567,46 @@ async function syncJob(id, options = {}) {
         method: 'POST', body: JSON.stringify({ values: sheetRow(job) })
       });
     }
+    try {
+      calendarSynced = await syncCalendarEvent(job);
+    } catch (error) {
+      calendarError = calendarErrorMessage(error);
+    }
+    if (calendarSynced) {
+      const refreshedRow = sheetRow(job);
+      const refreshedIds = await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A2:A`)}`);
+      const refreshedIndex = (refreshedIds.values || []).findIndex(row => String(row[0]) === String(job.id));
+      if (refreshedIndex >= 0) {
+        const rowNumber = refreshedIndex + 2;
+        await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A${rowNumber}:U${rowNumber}`)}?valueInputOption=RAW`, {
+          method: 'PUT', body: JSON.stringify({ values: refreshedRow })
+        });
+      }
+    }
     job.synced = true;
     job.syncedAt = new Date().toISOString();
     saveJobs();
-    if (!options.quiet) toast('Заявка отправлена в таблицу и календарь ✓');
+    if (!options.quiet) {
+      if (calendarSynced) toast('Заявка отправлена в таблицу и календарь ✓');
+      else if (calendarError) toast(`Заявка в таблице ✓ Календарь: ${calendarError}`);
+      else toast('Заявка отправлена в таблицу ✓');
+    }
   } catch (error) {
     if (!options.quiet) toast(error.message || 'Нет связи. Заявка сохранена на телефоне');
     return false;
   }
   return true;
+}
+
+function calendarErrorMessage(error) {
+  const message = String(error?.message || '');
+  if (message.includes('Calendar API has not been used') || message.includes('disabled')) {
+    return 'нужно включить Calendar API';
+  }
+  if (message.includes('insufficient') || message.includes('permission') || message.includes('scope')) {
+    return 'нужно заново разрешить доступ';
+  }
+  return message || 'событие пока не создано';
 }
 
 function calendarDateTime(date, time) {
@@ -609,7 +641,7 @@ function calendarEventBody(job) {
 }
 
 async function syncCalendarEvent(job) {
-  if (!job.scheduledDate || !job.scheduledFrom || !job.scheduledTo) return;
+  if (!job.scheduledDate || !job.scheduledFrom || !job.scheduledTo) return false;
   const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
   const body = calendarEventBody(job);
   let event = null;
@@ -631,6 +663,7 @@ async function syncCalendarEvent(job) {
     });
   }
   if (event?.id) job.calendarEventId = event.id;
+  return Boolean(job.calendarEventId);
 }
 
 async function deleteCalendarEvent(job) {
