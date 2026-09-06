@@ -28,7 +28,7 @@ let accessToken = '';
 let tokenClient;
 let tokenPromise;
 let connectedEmail = localStorage.getItem(CONNECTED_EMAIL_KEY) || '';
-let profitPeriod = { type: 'month', from: '', to: '' };
+let profitPeriod = { type: 'week', from: '', to: '' };
 
 function readJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
@@ -115,6 +115,7 @@ function openNewJob(prefill = {}) {
   $('jobId').value = '';
   $('jobDialogTitle').textContent = 'Новая заявка';
   $('deleteJobButton').hidden = true;
+  $('copyJobButton').hidden = true;
   $('status').value = DEFAULT_STATUS;
   $('date').value = today();
   delete $('scheduledDate').dataset.changed;
@@ -134,6 +135,7 @@ function editJob(id) {
   if (!job) return;
   $('jobDialogTitle').textContent = 'Редактирование заявки';
   $('deleteJobButton').hidden = false;
+  $('copyJobButton').hidden = false;
   $('scheduledDate').dataset.changed = 'true';
   ['id','status','date','scheduledDate','name','phone','address','repairPrice','partsCost','distanceKm','comment'].forEach(field => {
     const element = field === 'id' ? $('jobId') : $(field);
@@ -243,6 +245,19 @@ function mapUrl(location) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(value)}`;
 }
 
+function isGoogleMapsLink(location) {
+  return /^https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps|www\.google\.[^/]+\/maps|google\.[^/]+\/maps)/i.test((location || '').trim());
+}
+
+function addressLabel(location) {
+  if (!location) return '';
+  return isGoogleMapsLink(location) ? 'Есть точка' : location;
+}
+
+function isActiveJob(job) {
+  return !['Выполнено', 'Отказ'].includes(job.status);
+}
+
 function currentProfitJobs() {
   const completed = jobs.filter(j => j.status === 'Выполнено');
   if (profitPeriod.type === 'week') return jobsInRange(completed, isoDate(addDays(new Date(), -6)), today());
@@ -296,11 +311,11 @@ function render() {
   const query = ($('searchInput').value || '').trim().toLowerCase();
   const visible = jobs
     .filter(j => {
-      if (filter === 'recent') return jobsInRange([j], recentFromDate(), today()).length > 0;
+      if (filter === 'recent') return isActiveJob(j) || jobsInRange([j], recentFromDate(), today()).length > 0;
       return filter === 'all' || j.status === filter;
     })
     .filter(j => !query || `${j.name || ''} ${j.phone || ''}`.toLowerCase().includes(query))
-    .sort((a,b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    .sort(sortJobs);
 
   $('emptyState').hidden = visible.length !== 0;
   $('jobsList').innerHTML = visible.map(job => {
@@ -315,7 +330,7 @@ function render() {
     return `<article class="job-card ${dueToday ? 'due-today' : ''}" data-id="${escapeHtml(job.id)}">
       <div class="job-main">
         <div class="job-top"><div><h2>${escapeHtml(job.name || 'Без имени')}</h2><p class="job-phone">${escapeHtml(job.phone || 'Телефон не указан')} · ${escapeHtml(job.date)}</p></div><span class="status ${statusClass(job.status)}">${escapeHtml(job.status)}</span></div>
-        ${job.address ? `<p class="job-address">📍 ${escapeHtml(job.address)}</p>` : ''}
+        ${job.address ? `<p class="job-address">📍 ${escapeHtml(addressLabel(job.address))}</p>` : ''}
         ${schedule ? `<p class="${scheduleClass}">🗓 ${scheduleLabel}: ${escapeHtml(schedule)}${dueToday ? ' · СЕГОДНЯ' : ''}</p>` : ''}
         ${job.comment ? `<p class="job-comment">💬 ${escapeHtml(job.comment)}</p>` : ''}
         ${job.photoData ? `<p class="job-photo">📷 Фото сохранено на этом устройстве</p>` : ''}
@@ -334,6 +349,18 @@ function render() {
 
   $('profitSummaryButton')?.addEventListener('click', chooseProfitPeriod);
   renderChart();
+}
+
+function sortJobs(a, b) {
+  const activeDiff = Number(isActiveJob(b)) - Number(isActiveJob(a));
+  if (activeDiff) return activeDiff;
+  if (isActiveJob(a) && isActiveJob(b)) {
+    const scheduleA = `${a.scheduledDate || '9999-12-31'} ${a.scheduledFrom || '99:99'}`;
+    const scheduleB = `${b.scheduledDate || '9999-12-31'} ${b.scheduledFrom || '99:99'}`;
+    const scheduleDiff = scheduleA.localeCompare(scheduleB);
+    if (scheduleDiff) return scheduleDiff;
+  }
+  return (b.updatedAt || '').localeCompare(a.updatedAt || '');
 }
 
 function renderChart() {
@@ -550,10 +577,9 @@ async function syncPendingJobs() {
 async function syncJob(id, options = {}) {
   const job = jobs.find(item => item.id === id);
   if (!job) return;
-  let calendarSynced = false;
-  let calendarError = '';
   try {
     if (!options.quiet) toast('Подключаю Google…');
+    await syncCalendarEvent(job);
     const base = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values`;
     const ids = await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A2:A`)}`);
     const rowIndex = (ids.values || []).findIndex(row => String(row[0]) === String(job.id));
@@ -567,46 +593,15 @@ async function syncJob(id, options = {}) {
         method: 'POST', body: JSON.stringify({ values: sheetRow(job) })
       });
     }
-    try {
-      calendarSynced = await syncCalendarEvent(job);
-    } catch (error) {
-      calendarError = calendarErrorMessage(error);
-    }
-    if (calendarSynced) {
-      const refreshedRow = sheetRow(job);
-      const refreshedIds = await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A2:A`)}`);
-      const refreshedIndex = (refreshedIds.values || []).findIndex(row => String(row[0]) === String(job.id));
-      if (refreshedIndex >= 0) {
-        const rowNumber = refreshedIndex + 2;
-        await sheetsRequest(`${base}/${encodeURIComponent(`${SHEET_NAME}!A${rowNumber}:U${rowNumber}`)}?valueInputOption=RAW`, {
-          method: 'PUT', body: JSON.stringify({ values: refreshedRow })
-        });
-      }
-    }
     job.synced = true;
     job.syncedAt = new Date().toISOString();
     saveJobs();
-    if (!options.quiet) {
-      if (calendarSynced) toast('Заявка отправлена в таблицу и календарь ✓');
-      else if (calendarError) toast(`Заявка в таблице ✓ Календарь: ${calendarError}`);
-      else toast('Заявка отправлена в таблицу ✓');
-    }
+    if (!options.quiet) toast('Заявка отправлена в таблицу и календарь ✓');
   } catch (error) {
     if (!options.quiet) toast(error.message || 'Нет связи. Заявка сохранена на телефоне');
     return false;
   }
   return true;
-}
-
-function calendarErrorMessage(error) {
-  const message = String(error?.message || '');
-  if (message.includes('Calendar API has not been used') || message.includes('disabled')) {
-    return 'нужно включить Calendar API';
-  }
-  if (message.includes('insufficient') || message.includes('permission') || message.includes('scope')) {
-    return 'нужно заново разрешить доступ';
-  }
-  return message || 'событие пока не создано';
 }
 
 function calendarDateTime(date, time) {
@@ -641,7 +636,7 @@ function calendarEventBody(job) {
 }
 
 async function syncCalendarEvent(job) {
-  if (!job.scheduledDate || !job.scheduledFrom || !job.scheduledTo) return false;
+  if (!job.scheduledDate || !job.scheduledFrom || !job.scheduledTo) return;
   const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
   const body = calendarEventBody(job);
   let event = null;
@@ -663,7 +658,6 @@ async function syncCalendarEvent(job) {
     });
   }
   if (event?.id) job.calendarEventId = event.id;
-  return Boolean(job.calendarEventId);
 }
 
 async function deleteCalendarEvent(job) {
@@ -722,6 +716,49 @@ async function deleteCurrentJob() {
     toast(connected ? 'Заявка удалена из телефона, таблицы и календаря' : 'Заявка удалена с этого устройства');
   } catch (error) {
     toast(error.message || 'Не удалось удалить заявку из Google');
+  }
+}
+
+function nextCopyName(name) {
+  const value = (name || 'Без имени').trim();
+  const match = value.match(/^(.*?)(?:\s+(\d+))?$/);
+  const base = (match?.[1] || value).trim() || 'Без имени';
+  const number = Number(match?.[2] || 1) + 1;
+  return `${base} ${number}`;
+}
+
+async function copyCurrentJob() {
+  const id = $('jobId').value;
+  const source = jobs.find(item => item.id === id);
+  if (!source) return;
+  const base = {
+    ...source,
+    id: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+    name: nextCopyName(source.name),
+    repairPrice: 0,
+    partsCost: 0,
+    totalCosts: 0,
+    profit: 0,
+    synced: false,
+    updatedAt: new Date().toISOString(),
+    reminderSentFor: '',
+    calendarEventId: '',
+    photoData: '',
+    photoName: '',
+    photoUpdatedAt: ''
+  };
+  const copy = normalizeJob(base);
+  jobs.push(copy);
+  saveJobs();
+  editJob(copy.id);
+  toast(`Заявка "${copy.name}" создана`);
+  if (accessToken && connectedEmail === ALLOWED_EMAIL) {
+    try {
+      await syncJob(copy.id, { quiet: true });
+      toast(`Заявка "${copy.name}" создана и отправлена ✓`);
+    } catch {
+      toast(`Заявка "${copy.name}" создана на телефоне ☁`);
+    }
   }
 }
 
@@ -827,6 +864,7 @@ document.querySelectorAll('.close-settings').forEach(button => button.addEventLi
 document.querySelectorAll('.close-period').forEach(button => button.addEventListener('click', () => periodDialog.close()));
 document.querySelectorAll('.period-option').forEach(button => button.addEventListener('click', () => setProfitPeriod(button.dataset.period)));
 $('deleteJobButton').addEventListener('click', deleteCurrentJob);
+$('copyJobButton').addEventListener('click', copyCurrentJob);
 
 $('date').addEventListener('change', () => {
   if (!$('jobId').value && !$('scheduledDate').dataset.changed) $('scheduledDate').value = $('date').value;

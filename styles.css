@@ -94,8 +94,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(201,149,45,.
 .checkbox-line input { width: auto; }
 .photo-preview { padding: 12px; border: 1px dashed #cfd8e1; border-radius: 12px; background: #fbfcfd; color: var(--muted); font-size: 13px; }
 .photo-preview img { display: block; width: min(220px, 100%); margin-top: 8px; border-radius: 12px; border: 1px solid var(--line); }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 18px; }
 .dialog-actions .danger { margin-right: auto; }
+.icon-action { width: 46px; height: 46px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 50%; color: var(--navy); background: white; font-size: 22px; font-weight: 800; }
+.icon-action.primary { border: 0; color: white; background: var(--green); }
+.icon-action.danger { border: 0; color: white; background: var(--red); }
 .period-buttons { display: grid; gap: 10px; }
 .period-buttons .secondary { text-align: left; }
 .account-card { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #f7f9fb; }
