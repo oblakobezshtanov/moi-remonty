@@ -1,5 +1,7 @@
 const STORAGE_KEY = 'repair-jobs-v1';
 const CONNECTED_EMAIL_KEY = 'repair-google-email-v1';
+const PHOTO_DB_NAME = 'repair-photos-v1';
+const PHOTO_STORE = 'photos';
 const FUEL_CONSUMPTION = 7;
 const FUEL_PRICE = 1.6;
 const GOOGLE_CLIENT_ID = '298331612158-3hmsvel6fnph3ep8f9s2p1kti141hrce.apps.googleusercontent.com';
@@ -35,8 +37,26 @@ function readJson(key, fallback) {
   catch { return fallback; }
 }
 
+function jobHasPhoto(job = {}) {
+  return Boolean(job.hasPhoto || job.photoData);
+}
+
+function jobForStorage(job) {
+  const clean = normalizeJob(job);
+  const { photoData, ...stored } = clean;
+  stored.hasPhoto = jobHasPhoto(clean);
+  return stored;
+}
+
 function saveJobs() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs.map(normalizeJob)));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs.map(jobForStorage)));
+  } catch (error) {
+    if (error?.name === 'QuotaExceededError' || String(error?.message || '').includes('quota')) {
+      throw new Error('Память телефона для заявок заполнена. Новая версия хранит фото отдельно; закройте приложение и откройте снова.');
+    }
+    throw error;
+  }
   render();
 }
 
@@ -52,9 +72,54 @@ function normalizeJob(job = {}) {
     scheduledTo: job.scheduledTo || '',
     reminderSentFor: job.reminderSentFor || '',
     calendarEventId: job.calendarEventId || '',
+    hasPhoto: jobHasPhoto(job),
     synced: Boolean(job.synced)
   };
   return { ...base, ...calculations(base) };
+}
+
+function openPhotoDb() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('Хранилище фото недоступно на этом устройстве'));
+      return;
+    }
+    const request = indexedDB.open(PHOTO_DB_NAME, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(PHOTO_STORE, { keyPath: 'id' });
+    request.onerror = () => reject(request.error || new Error('Не удалось открыть хранилище фото'));
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+async function photoStoreAction(mode, action) {
+  const db = await openPhotoDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(PHOTO_STORE, mode);
+    const store = transaction.objectStore(PHOTO_STORE);
+    const request = action(store);
+    request.onerror = () => reject(request.error || transaction.error);
+    request.onsuccess = () => resolve(request.result);
+    transaction.oncomplete = () => db.close();
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error || new Error('Ошибка хранилища фото'));
+    };
+  });
+}
+
+function savePhoto(id, dataUrl, name, updatedAt) {
+  if (!dataUrl) return Promise.resolve();
+  return photoStoreAction('readwrite', store => store.put({ id, dataUrl, name: name || 'photo.jpg', updatedAt: updatedAt || new Date().toISOString() }));
+}
+
+function loadPhoto(id) {
+  if (!id) return Promise.resolve(null);
+  return photoStoreAction('readonly', store => store.get(id));
+}
+
+function deletePhoto(id) {
+  if (!id) return Promise.resolve();
+  return photoStoreAction('readwrite', store => store.delete(id));
 }
 
 function numberValue(id) {
@@ -150,11 +215,22 @@ function editJob(id) {
 function resetPhotoFields(job = {}) {
   $('photo').value = '';
   $('removePhoto').checked = false;
-  $('removePhotoWrap').hidden = !job.photoData;
-  $('photoPreview').hidden = !job.photoData;
-  $('photoPreview').innerHTML = job.photoData
-    ? `Сохранённое фото: ${escapeHtml(job.photoName || 'фото')}<img src="${job.photoData}" alt="Фото заявки">`
-    : '';
+  const hasPhoto = jobHasPhoto(job);
+  $('removePhotoWrap').hidden = !hasPhoto;
+  $('photoPreview').hidden = !hasPhoto;
+  if (!hasPhoto) {
+    $('photoPreview').innerHTML = '';
+    return;
+  }
+  $('photoPreview').innerHTML = `Сохранённое фото: ${escapeHtml(job.photoName || 'фото')}`;
+  if (job.photoData) {
+    $('photoPreview').innerHTML += `<img src="${job.photoData}" alt="Фото заявки">`;
+    return;
+  }
+  loadPhoto(job.id).then(photo => {
+    if (!photo?.dataUrl || $('jobId').value !== job.id) return;
+    $('photoPreview').innerHTML = `Сохранённое фото: ${escapeHtml(photo.name || job.photoName || 'фото')}<img src="${photo.dataUrl}" alt="Фото заявки">`;
+  }).catch(() => {});
 }
 
 async function formJob() {
@@ -163,19 +239,28 @@ async function formJob() {
   let photoData = previous.photoData || '';
   let photoName = previous.photoName || '';
   let photoUpdatedAt = previous.photoUpdatedAt || '';
+  let hasPhoto = jobHasPhoto(previous);
 
   if ($('removePhoto').checked) {
+    await deletePhoto(id).catch(() => {});
     photoData = '';
     photoName = '';
     photoUpdatedAt = '';
+    hasPhoto = false;
   }
 
   const selectedPhoto = $('photo').files?.[0];
   if (selectedPhoto) {
     const compressed = await compressImage(selectedPhoto);
-    photoData = compressed.dataUrl;
     photoName = selectedPhoto.name || 'photo.jpg';
     photoUpdatedAt = new Date().toISOString();
+    await savePhoto(id, compressed.dataUrl, photoName, photoUpdatedAt);
+    photoData = '';
+    hasPhoto = true;
+  } else if (photoData) {
+    await savePhoto(id, photoData, photoName, photoUpdatedAt).catch(() => {});
+    photoData = '';
+    hasPhoto = true;
   }
 
   const [scheduledFrom = '', scheduledTo = ''] = ($('timeSlot').value || '').split('-');
@@ -199,7 +284,8 @@ async function formJob() {
     calendarEventId: previous.calendarEventId || '',
     photoData,
     photoName,
-    photoUpdatedAt
+    photoUpdatedAt,
+    hasPhoto
   };
 
   const reminderKey = getReminderKey(base);
@@ -261,6 +347,7 @@ function isActiveJob(job) {
 function currentProfitJobs() {
   const completed = jobs.filter(j => j.status === 'Выполнено');
   if (profitPeriod.type === 'week') return jobsInRange(completed, isoDate(addDays(new Date(), -6)), today());
+  if (profitPeriod.type === 'twoWeeks') return jobsInRange(completed, isoDate(addDays(new Date(), -13)), today());
   if (profitPeriod.type === 'month') return jobsInRange(completed, isoDate(addDays(new Date(), -29)), today());
   if (profitPeriod.type === 'threeMonths') return jobsInRange(completed, isoDate(addDays(new Date(), -89)), today());
   if (profitPeriod.type === 'custom') return jobsInRange(completed, profitPeriod.from, profitPeriod.to);
@@ -280,6 +367,7 @@ function recentFromDate() {
 
 function profitPeriodLabel() {
   if (profitPeriod.type === 'week') return 'за 7 дней';
+  if (profitPeriod.type === 'twoWeeks') return 'за 14 дней';
   if (profitPeriod.type === 'month') return 'за 30 дней';
   if (profitPeriod.type === 'threeMonths') return 'за 3 месяца';
   if (profitPeriod.type === 'custom') return `${formatDate(profitPeriod.from)} — ${formatDate(profitPeriod.to)}`;
@@ -333,7 +421,7 @@ function render() {
         ${job.address ? `<p class="job-address">📍 ${escapeHtml(addressLabel(job.address))}</p>` : ''}
         ${schedule ? `<p class="${scheduleClass}">🗓 ${scheduleLabel}: ${escapeHtml(schedule)}${dueToday ? ' · СЕГОДНЯ' : ''}</p>` : ''}
         ${job.comment ? `<p class="job-comment">💬 ${escapeHtml(job.comment)}</p>` : ''}
-        ${job.photoData ? `<p class="job-photo">📷 Фото сохранено на этом устройстве</p>` : ''}
+        ${jobHasPhoto(job) ? `<p class="job-photo">📷 Фото сохранено на этом устройстве</p>` : ''}
         <div class="money-row"><div><span>Ремонт</span><strong>${money(job.repairPrice)}</strong></div><div><span>Расходы</span><strong>${money(job.totalCosts)}</strong></div><div><span>Прибыль</span><strong>${money(job.profit)}</strong></div></div>
       </div>
       <div class="job-actions">
@@ -365,7 +453,7 @@ function sortJobs(a, b) {
 
 function renderChart() {
   const range = $('chartRange').value;
-  const days = range === 'month' ? 30 : 7;
+  const days = range === 'month' ? 30 : range === 'twoWeeks' ? 14 : 7;
   const dates = Array.from({ length: days }, (_, index) => isoDate(addDays(new Date(), index - days + 1)));
   const rows = dates.map(date => {
     const dayJobs = jobs.filter(job => dateForStats(job) === date);
@@ -379,15 +467,18 @@ function renderChart() {
   const maxProfit = Math.max(...rows.map(row => Math.abs(row.profit)), 1);
   const maxJobs = Math.max(...rows.map(row => row.jobs), 1);
   $('chart').innerHTML = rows.map(row => {
-    const profitWidth = Math.max(3, Math.round(Math.abs(row.profit) / maxProfit * 100));
-    const jobsWidth = Math.max(3, Math.round(row.jobs / maxJobs * 100));
-    return `<div class="chart-row">
-      <span class="chart-label">${escapeHtml(formatDate(row.date).slice(0, 5))}</span>
-      <div class="chart-bars">
-        <div class="bar" style="width:${profitWidth}%"></div>
-        <div class="bar jobs" style="width:${jobsWidth}%"></div>
+    const profitHeight = Math.max(row.profit ? 12 : 4, Math.round(Math.abs(row.profit) / maxProfit * 110));
+    const jobsHeight = Math.max(row.jobs ? 8 : 3, Math.round(row.jobs / maxJobs * 44));
+    const label = formatDate(row.date).slice(0, 5);
+    const profitClass = row.profit < 0 ? ' negative' : '';
+    return `<div class="chart-day" title="${escapeHtml(label)} · ${escapeHtml(money(row.profit))} · заявок: ${row.jobs}">
+      <span class="chart-count">${row.jobs || ''}</span>
+      <div class="chart-column">
+        <div class="bar jobs" style="height:${jobsHeight}px"></div>
+        <div class="bar${profitClass}" style="height:${profitHeight}px"></div>
       </div>
-      <span class="chart-value">${money(row.profit)} · ${row.jobs}</span>
+      <span class="chart-label">${escapeHtml(label)}</span>
+      <span class="chart-value">${escapeHtml(money(row.profit))}</span>
     </div>`;
   }).join('');
 }
@@ -552,6 +643,7 @@ async function loadJobsFromSheet(showMessage = true) {
     if (!localJob || !localJob.updatedAt || (cloudJob.updatedAt && cloudJob.updatedAt >= localJob.updatedAt)) {
       merged.set(String(cloudJob.id), {
         ...cloudJob,
+        hasPhoto: jobHasPhoto(localJob),
         photoData: localJob?.photoData || '',
         photoName: localJob?.photoName || '',
         photoUpdatedAt: localJob?.photoUpdatedAt || ''
@@ -710,6 +802,7 @@ async function deleteCurrentJob() {
       await deleteCalendarEvent(job);
       await deleteJobFromSheet(job);
     }
+    await deletePhoto(id).catch(() => {});
     jobs = jobs.filter(item => item.id !== id);
     saveJobs();
     jobDialog.close();
@@ -745,7 +838,8 @@ async function copyCurrentJob() {
     calendarEventId: '',
     photoData: '',
     photoName: '',
-    photoUpdatedAt: ''
+    photoUpdatedAt: '',
+    hasPhoto: false
   };
   const copy = normalizeJob(base);
   jobs.push(copy);
@@ -758,6 +852,29 @@ async function copyCurrentJob() {
       toast(`Заявка "${copy.name}" создана и отправлена ✓`);
     } catch {
       toast(`Заявка "${copy.name}" создана на телефоне ☁`);
+    }
+  }
+}
+
+async function migratePhotosFromLocalStorage() {
+  let changed = false;
+  for (const job of jobs) {
+    if (!job.photoData) continue;
+    try {
+      await savePhoto(job.id, job.photoData, job.photoName, job.photoUpdatedAt);
+      job.hasPhoto = true;
+      job.photoData = '';
+      changed = true;
+    } catch {
+      // If IndexedDB is unavailable, keep the old in-memory photo for this session.
+    }
+  }
+  if (changed) {
+    try {
+      saveJobs();
+      toast('Фото перенесены в отдельное хранилище телефона');
+    } catch {
+      toast('Не удалось освободить память. Удалите лишние фото в заявках');
     }
   }
 }
@@ -789,15 +906,15 @@ function imageFromFile(file) {
 async function compressImage(file) {
   const img = await imageFromFile(file);
   const canvas = document.createElement('canvas');
-  const maxSide = 1280;
+  const maxSide = 1000;
   const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
   canvas.width = Math.max(1, Math.round(img.width * scale));
   canvas.height = Math.max(1, Math.round(img.height * scale));
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  let quality = 0.82;
+  let quality = 0.72;
   let dataUrl = canvas.toDataURL('image/jpeg', quality);
-  while (dataUrl.length > 900000 && quality > 0.45) {
+  while (dataUrl.length > 420000 && quality > 0.42) {
     quality -= 0.08;
     dataUrl = canvas.toDataURL('image/jpeg', quality);
   }
@@ -878,8 +995,15 @@ jobForm.addEventListener('submit', async event => {
   try {
     const job = await formJob();
     const index = jobs.findIndex(item => item.id === job.id);
+    const previousJobs = [...jobs];
     if (index >= 0) jobs[index] = job; else jobs.push(job);
-    saveJobs();
+    try {
+      saveJobs();
+    } catch (error) {
+      jobs = previousJobs;
+      render();
+      throw error;
+    }
     jobDialog.close();
     if (accessToken && connectedEmail === ALLOWED_EMAIL) {
       const sent = await syncJob(job.id, { quiet: true });
@@ -923,23 +1047,25 @@ $('notificationButton').addEventListener('click', async () => {
   toast(permission === 'granted' ? 'Напоминания включены' : 'Напоминания не разрешены');
 });
 
-$('jobsList').addEventListener('click', event => {
+$('jobsList').addEventListener('click', async event => {
   const card = event.target.closest('.job-card');
   if (!card) return;
   const job = jobs.find(item => item.id === card.dataset.id);
   if (event.target.closest('.edit')) editJob(card.dataset.id);
   if (event.target.closest('.sync')) syncJob(card.dataset.id);
   if (event.target.closest('.photo-open')) {
-    if (!job?.photoData) toast('Фото для этой заявки нет');
+    const photo = job?.photoData ? { dataUrl: job.photoData } : await loadPhoto(job?.id).catch(() => null);
+    if (!photo?.dataUrl) toast('Фото для этой заявки нет');
     else {
       const win = window.open();
-      if (win) win.document.write(`<title>Фото заявки</title><img src="${job.photoData}" style="max-width:100%;height:auto">`);
+      if (win) win.document.write(`<title>Фото заявки</title><img src="${photo.dataUrl}" style="max-width:100%;height:auto">`);
     }
   }
 });
 
 updateAccountStatus();
 render();
+migratePhotosFromLocalStorage();
 const shared = parseSharedData();
 if (shared) openNewJob(shared);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
